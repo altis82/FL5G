@@ -68,8 +68,13 @@ Using 5G data `src_user.csv`
 ### Centralized learning
 ### FL learning
 Client0
+
 `python3 client.py --partition-id 0 -data-path src_user.csv --target-column targetTput`
+
 Client1
+
 `python3 client.py --partition-id 0 -data-path src_user.csv --target-column targetTput`
+
 Server
+
 `python3 server.py`
