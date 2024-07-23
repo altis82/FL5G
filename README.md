@@ -3,7 +3,7 @@
 
 In this project there are 2 folders:
 - Centralized learning: We run 1 Server to collect all data from 2 clients using mqtt. Each of them will publish 5000 records. Each of client will take 5000 records from the csv file then sends to server. When the server receives all data, it will save into `recive_data.csv` and starts the centralized training. There is a json config file to configure the mqtt broker, and topics.
-
+```
   +-----------------+       +-----------------+       +-----------------+
   |                 |       |                 |       |                 |
   |    Client 1     +------->    MQTT Broker  +------->    Server       |
@@ -14,7 +14,7 @@ In this project there are 2 folders:
                           +-------------------+
                           |      Client 2     |
                           +-------------------+
-
+```
 Detailed explanation 
 ### Clients (Client 1 and Client 2):
 
@@ -34,6 +34,7 @@ Detailed explanation
 
 
 - FL learning: We run 1 server to aggregate weights  and distribute to clients. To run Client we input the id, data path file, and target column to predict. 
+```
   +-----------------+       +-----------------+       +-----------------+
   |                 |       |                 |       |                 |
   |    Client 1     +------->    Server       <-------+    Client 2     |
@@ -43,7 +44,7 @@ Detailed explanation
         |                           |                          |
         |                           |                          |
         +------------------------------------------------------+
-
+```
 ### Clients (Client 1 and Client 2):
 
 - Each client is initialized with an ID, data path file, and target column to predict.
