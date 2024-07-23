@@ -1,0 +1,23 @@
+{
+    "mqtt": {
+      "broker": "localhost",
+      "port": 1883,
+      "keep_alive": 60
+    },
+    "topics": {
+      "subscribe": [
+        "topic/client1",
+        "topic/client2"
+      ],
+      "publish": [
+        "topic/client1",
+        "topic/client2"
+      ]
+    },
+    "csv": {
+        "server": "received_data.csv",
+      "client1": "src_ue.csv",
+      "client2": "src_ue.csv"
+    }
+  }
+  
