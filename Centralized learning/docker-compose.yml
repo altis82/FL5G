@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  mqtt-broker:
+    build:
+      context: ./mqtt
+      dockerfile: Dockerfile
+    privileged: true
+    network_mode: host
+    ports:
+      - "1883:1883"
+    container_name: mqtt-broker
+    volumes:
+    - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+
+  client1:
+    container_name: client1
+    build: .
+    image: fl5g_centralize
+    volumes:
+      - ./data:/usr/src/app/data
+    command: python client1.py
+    environment:
+      - CLIENT_ID=0
+    
+    network_mode: host
+
+  client2:
+    container_name: client2
+    build: .
+    image: fl5g_centralize
+    volumes:
+      - ./data:/usr/src/app/data
+    command: python client2.py
+    environment:
+      - CLIENT_ID=1
+    
+    network_mode: host
+
+  # Add more clients as needed
+  server:
+    container_name: server
+    build: .
+    image: fl5g_centralize
+    volumes:
+      - ./data:/usr/src/app/data
+    command: python server.py
+    
+    
+    network_mode: host
+
+# networks:
+#   fl-network:
+#     driver: bridge

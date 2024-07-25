@@ -7,8 +7,8 @@ import os
 current_folder = os.path.dirname(os.path.abspath(__file__))
 
 # Get the parent directory (one level up)
-parent_folder = os.path.dirname(current_folder)
-config_file_path = os.path.join(parent_folder, 'config.json')
+
+config_file_path = os.path.join('config.json')
 print(config_file_path)
 
 with open(config_file_path, 'r') as f:
