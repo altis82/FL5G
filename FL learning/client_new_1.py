@@ -9,6 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 from typing import Dict, Tuple
+import argparse
+
 DEVICE = torch.device("cpu")  # Try "cuda" to train on GPU
 # Define the neural network
 class Net(nn.Module):
@@ -125,10 +127,37 @@ class FlowerClient(fl.client.NumPyClient):
         return float(test_loss), len(self.testloader.dataset), metrics
 
 if __name__ == "__main__":
-    trainloaders, testloader = load_csv_dataset('src_ue.csv')
-    client_partition = 0
+    
+    parser = argparse.ArgumentParser(description="Flower")
+    parser.add_argument(
+        "--client-id",
+        choices=[0, 1],
+        default=0,
+        type=int,
+        help="Partition of the dataset divided into 2 iid partitions created artificially.",
+    )
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        required=True,
+        help="Path to the CSV data file.",
+    )
+    # parser.add_argument(
+    #     "--target-column",
+    #     type=str,
+    #     required=True,
+    #     help="Target column name in the CSV file.",
+    # )
+    #python3 client_new_1.py --client-id 0 --data-path src_ue.csv 
+    args = parser.parse_args()
+    "This is the data file use for all clients"
+    trainloaders, testloader = load_csv_dataset(args.data_path)
+
+    client_partition = args.client_id
+
     client_trainloader = trainloaders[client_partition]
     client_testloader = testloader
 
     client = FlowerClient(client_trainloader, client_testloader)
     fl.client.start_numpy_client(server_address="localhost:8080", client=client)
+    
