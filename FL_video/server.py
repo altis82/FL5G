@@ -27,13 +27,13 @@ class CustomStrategy(fl.server.strategy.FedAvg):
         return aggregated_loss
 
 # Initialize the plot
-plt.ion()
-plt.figure()
+# plt.ion()
+# plt.figure()
 
 # Start the server
 fl.server.start_server(
     server_address="0.0.0.0:8080",
-    config=fl.server.ServerConfig(num_rounds=5),
+    config=fl.server.ServerConfig(num_rounds=100),
     strategy=CustomStrategy()
 )
 

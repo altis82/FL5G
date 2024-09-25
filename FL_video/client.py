@@ -1,40 +1,20 @@
-import flwr as fl
-import torch
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
-from collections import OrderedDict
-from typing import Tuple
 import argparse
-
-
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Neural Network Model
-class Net(nn.Module):
-    def __init__(self, feature_size: int = 8) -> None:
-        super(Net, self).__init__()
-        self.fc1 = nn.Linear(feature_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 32)
-        self.fc4 = nn.Linear(32, 1)  # Output a single value for each window
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        x = torch.sigmoid(self.fc4(x))
-        return x
-
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import BinaryCrossentropy
+from tensorflow.keras.metrics import Accuracy
+import flwr as fl
+import joblib
 
 # Function to load dataset and prepare data for sliding window
-def load_csv_service_dataset(window_size: int=100):
+def load_csv_service_dataset(window_size: int=300):
     # Load and concatenate both service datasets
-    service_a = pd.read_csv('Video_ue_metrics.csv')  # Replace with actual filenames
+    service_a = pd.read_csv('ue_metrics.csv', delimiter=";")
     service_b = pd.read_csv('ping_ue_metrics.csv')
 
     # Assign service type labels
@@ -59,179 +39,132 @@ def load_csv_service_dataset(window_size: int=100):
         # Check if the window has consistent labels
         if len(window_label.unique()) == 1:
             mean_dl = np.mean(window_dl)
-            mean_ul = np.mean(window_ul)
             std_dl = np.std(window_dl)
-            std_ul = np.std(window_ul)
             min_val_dl = np.min(window_dl)
-            min_val_ul = np.min(window_ul)
             max_val_dl = np.max(window_dl)
-            max_val_ul = np.max(window_ul)
 
             # Append features and corresponding label
-            features.append([mean_dl, std_dl, min_val_dl, max_val_dl, mean_ul, std_ul, min_val_ul, max_val_ul])
-            labels.append(window_label.iloc[0])
+            features.append([mean_dl, std_dl, min_val_dl, max_val_dl])
+            labels.append(data['service_type'].iloc[i + window_size - 1])  
 
     # Convert to DataFrame for features and array for labels
-    X = pd.DataFrame(features, columns=['mean_dl', 'std_dl', 'min_val_dl', 'max_val_dl', 'mean_ul', 'std_ul', 'min_val_ul', 'max_val_ul'])
+    X = pd.DataFrame(features, columns=['mean_dl', 'std_dl', 'min_val_dl', 'max_val_dl'])
     y = np.array(labels)
 
     # Scale the features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
+    # Save the scaler for later use during prediction
+    joblib.dump(scaler, 'scaler.save')
+
     # Split into training and test sets
     X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
     return X_train, X_test, y_train, y_test
 
+# Create the Keras MLP model
+def create_model(input_shape: int):
+    model = Sequential()
+    model.add(Dense(128, input_dim=input_shape, activation='relu'))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dense(64, activation='relu'))
+    model.add(Dense(1, activation='sigmoid'))
 
-# Train function for model
-def train(net, X_train, y_train, epochs: int, verbose=False):
-    criterion = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(net.parameters())
-    net.train()
-
-    for epoch in range(epochs):
-        running_loss = 0.0
-        for i in range(len(X_train)):
-            features, targets = torch.tensor(X_train[i]).float().to(DEVICE), torch.tensor(y_train[i]).float().to(DEVICE)
-
-            optimizer.zero_grad()
-            outputs = net(features)
-            loss = criterion(outputs, targets.view(-1, 1))
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-        running_loss /= len(X_train)
-
-        if verbose:
-            print(f"Epoch {epoch + 1}: train loss {running_loss:.6f}")
-
-
-# Test function for model evaluation
-def test(net, X_test, y_test):
-    criterion = torch.nn.MSELoss()
-    total_loss = 0.0
-    net.eval()
-
-    with torch.no_grad():
-        for i in range(len(X_test)):
-            features, targets = torch.tensor(X_test[i]).float().to(DEVICE), torch.tensor(y_test[i]).float().to(DEVICE)
-            outputs = net(features)
-            loss = criterion(outputs, targets.view(-1, 1))
-            total_loss += loss.item()
-
-    total_loss /= len(X_test)
-    return total_loss
-
+    # Compile the model
+    model.compile(optimizer=Adam(learning_rate=0.0001), loss='binary_crossentropy', metrics=['accuracy'])
+    
+    
+    return model
 
 # Flower Client for Federated Learning
 class FlowerClient(fl.client.NumPyClient):
-    def __init__(self, X_train, X_test, y_train, y_test, client_ID):
+    def __init__(self, model, X_train, X_test, y_train, y_test, client_ID):
+        self.model = model
         self.X_train = X_train
         self.X_test = X_test
         self.y_train = y_train
         self.y_test = y_test
         self.client_ID = client_ID
-        feature_size = X_train.shape[1]  # Feature size is the number of columns in X_train
-        self.model = Net(feature_size=feature_size).to(DEVICE)
 
     def get_parameters(self, config):
-        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        return self.model.get_weights()
 
     def set_parameters(self, parameters):
-        params_dict = zip(self.model.state_dict().keys(), parameters)
-        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-        self.model.load_state_dict(state_dict, strict=True)
+        self.model.set_weights(parameters)
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
-        train(self.model, self.X_train, self.y_train, epochs=1)
-        torch.save(self.model.state_dict(), f"client_{self.client_ID}_model.pth")
+        self.model.fit(self.X_train, self.y_train, epochs=1, batch_size=16, validation_split=0.2)
+        
+        # Save the trained model
+        self.model.save(f'federated_model_{self.client_ID}.h5')
+
         return self.get_parameters(config={}), len(self.X_train), {}
 
-    def evaluate(self, parameters, config) -> Tuple[float, int, dict]:
+    def evaluate(self, parameters, config):
         self.set_parameters(parameters)
-        test_loss = test(self.model, self.X_test, self.y_test)
-        return float(test_loss), len(self.X_test), {"loss": test_loss}
+        loss, accuracy = self.model.evaluate(self.X_test, self.y_test, verbose=0)
+        return float(loss), len(self.X_test), {"accuracy": float(accuracy)}
 
-def load_model_for_prediction(model_path: str, input_data: np.ndarray):
-    feature_size = input_data.shape[1]
-    model = Net(feature_size=feature_size).to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
-    input_tensor = torch.tensor(input_data).float().to(DEVICE)
-    with torch.no_grad():
-        output = model(input_tensor)
-    return output.cpu().numpy()
+    def predict(self, data):
+        # Predict using the loaded model
+        prediction = self.model.predict(data)
+        return prediction
 
-def load_last_100_records(filepath: str):
-    data = pd.read_csv(filepath)
-    
-    # Extract the last 100 records
-    last_100_records = data.tail(100)
-    last_100_records = last_100_records.dropna(subset=['dl_brate', 'ul_brate'])
-    # Assuming the relevant features are 'dl_brate' and 'ul_brate'
-    dl_brate = last_100_records['dl_brate'].values
-   
-    ul_brate = last_100_records['ul_brate'].values
- 
-    print("last 100 records:", dl_brate, ul_brate)
-    # Preprocess (e.g., scaling) the features
-    features = []
+def preprocess_data(filepath):
+    # Load the data
+    data = pd.read_csv('ping_ue_metrics.csv')
+    data=data.tail(400)
+    dl_brate= data['dl_brate'].values 
+    ul_brate=data['ul_brate'].values
     mean_dl = np.mean(dl_brate)
-    std_dl = np.std(dl_brate)
-    min_val_dl = np.min(dl_brate)
-    max_val_dl = np.max(dl_brate)
     mean_ul = np.mean(ul_brate)
+    std_dl = np.std(dl_brate)
     std_ul = np.std(ul_brate)
+    min_val_dl = np.min(dl_brate)
     min_val_ul = np.min(ul_brate)
+    max_val_dl = np.max(dl_brate)
     max_val_ul = np.max(ul_brate)
-
-    features.append([mean_dl, std_dl, min_val_dl, max_val_dl, mean_ul, std_ul, min_val_ul, max_val_ul])
+    features=[]
+       # Append to features list
+    features.append([mean_dl, std_dl, min_val_dl, max_val_dl])
     
-    # Convert to DataFrame and scale if necessary
-    X = pd.DataFrame(features, columns=['mean_dl', 'std_dl', 'min_val_dl', 'max_val_dl', 'mean_ul', 'std_ul', 'min_val_ul', 'max_val_ul'])
-    print("data prediction",X)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    return X_scaled
+    # Convert to DataFrame and normalize
+    X = pd.DataFrame(features, columns=['mean_dl', 'std_dl', 'min_val_dl', 'max_val_dl'])
+    return X
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flower Client")
-    parser.add_argument(
-        "--client-id",
-        choices=[0, 1],
-        default=0,
-        type=int,
-        help="Client ID (use 0 or 1 for partitioning)",
-    )
-    # parser.add_argument(
-    #     "--data-path",
-    #     type=str,
-    #     required=True,
-    #     help="Path to the CSV data file.",
-    # )
-
+    parser.add_argument("--client-id", choices=[0, 1], default=0, type=int, help="Client ID (use 0 or 1 for partitioning)")
     args = parser.parse_args()
 
     # Load dataset
-    X_train, X_test, y_train, y_test = load_csv_service_dataset(window_size=100)
+    X_train, X_test, y_train, y_test = load_csv_service_dataset(window_size=300)
+
+    # Create the Keras model
+    model = create_model(input_shape=X_train.shape[1])
 
     # Create the Flower client
-    client = FlowerClient(X_train, X_test, y_train, y_test, args.client_id)
-    
-    # Start the federated learning client
+    client = FlowerClient(model, X_train, X_test, y_train, y_test, args.client_id)
+
+    # Start federated learning client
     fl.client.start_numpy_client(server_address="localhost:8080", client=client)
 
+    # Normalize using the scaler fitted during training
+    # scaler = StandardScaler()
+    # X_scaled = scaler.fit_transform(X)
+    
+    
+    # # Path to new data
+    # filepath = 'ue_metrics.csv'
+    # input_data = preprocess_data(filepath)
 
-    #prediction
-    print("prediction")
-   
+    # # Load the scaler used during training
+    # scaler = joblib.load('scaler.save')
 
-    X_last_100 = load_last_100_records('Video_ue_metrics.csv')  # Replace with actual CSV path
+    # # Apply scaling to the test data
+    # X_test_scaled = scaler.transform(input_data)
 
-    # Load the saved model
-    prediction = load_model_for_prediction("client_0_model.pth", X_last_100)
-    print(f"Prediction for last 100 records: {prediction}")
+    # # Use the model for prediction
+    # predictions = model.predict(X_test_scaled)
+    # print("Predictions:", predictions)
